@@ -19,7 +19,7 @@ struct SettingsPanel: View {
                 simpleControls
                 favourites
                 if state.settings.advancedMode { advancedControls }
-                Text("Space new scene · L lock · F full screen · S hide this panel")
+                Text("Space play/pause · N new scene · K karaoke · ↑ ↓ lyrics earlier / later · L lock · F full screen · S hide this panel")
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.4))
                     .fixedSize(horizontal: false, vertical: true)
@@ -149,6 +149,21 @@ struct SettingsPanel: View {
             }
             Toggle("Equaliser bars", isOn: equaliser)
             Toggle("Song title", isOn: $state.settings.showSong)
+            Toggle("Karaoke lyrics", isOn: $state.settings.karaoke)
+            if state.settings.karaoke {
+                HStack(spacing: 6) {
+                    Text("Lyrics")
+                    Spacer()
+                    Button { state.nudgeLyrics(-0.1) } label: { Image(systemName: "minus") }
+                        .help("Show lyrics later (↓)")
+                    Text(AppState.describeOffset(state.settings.lyricsOffset))
+                        .monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.6))
+                        .frame(minWidth: 86)
+                    Button { state.nudgeLyrics(0.1) } label: { Image(systemName: "plus") }
+                        .help("Show lyrics earlier (↑)")
+                }
+            }
             if state.settings.advancedMode, state.settings.showSong {
                 Toggle("Keep the song title on screen", isOn: $state.settings.keepSong)
             }

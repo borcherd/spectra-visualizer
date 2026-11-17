@@ -1,5 +1,6 @@
 import SwiftUI
 import MetalKit
+import Combine
 
 /// Launch with `--status-file <path>` to have audio state changes appended to a file.
 enum Diagnostics {
@@ -30,7 +31,8 @@ final class AppState: ObservableObject {
         didSet {
             guard settings != oldValue else { return }
             settings.save()
-            if settings.showSong { nowPlaying.start() }
+            if settings.showSong || settings.karaoke { nowPlaying.start() }
+            if settings.karaoke != oldValue.karaoke { syncLyrics(nowPlaying.track) }
         }
     }
     @Published var favourites: [Favourite] { didSet { Favourite.saveAll(favourites) } }
@@ -38,12 +40,17 @@ final class AppState: ObservableObject {
     @Published var sceneName = ""
     @Published var audioStatus: AudioStatus = .starting
     @Published var fps: Double = 0
+    /// A short message shown briefly at the top of the window.
+    @Published var toast: String?
+    private var toastClear: DispatchWorkItem?
 
     let device: MTLDevice
     let analyzer = AudioAnalyzer()
     let director = SceneDirector()
     let tap = SystemAudioTap()
     let nowPlaying = NowPlaying()
+    let lyrics = Lyrics()
+    private var subscriptions = Set<AnyCancellable>()
     let renderer: Renderer
 
     private init() {
@@ -72,6 +79,40 @@ final class AppState: ObservableObject {
         }
         tap.onSamples = { [analyzer] p, n in analyzer.pushFromTap(p, n) }
         director.next(settings: settings)
+        nowPlaying.$track
+            .receive(on: RunLoop.main)
+            .sink { [unowned self] track in self.syncLyrics(track) }
+            .store(in: &subscriptions)
+    }
+
+    /// Shifts the lyrics by `delta` seconds; positive shows them earlier.
+    func nudgeLyrics(_ delta: Double) {
+        guard settings.karaoke else { return }
+        let value = ((settings.lyricsOffset + delta) * 10).rounded() / 10
+        settings.lyricsOffset = max(-5, min(5, value))
+        show(toast: "Lyrics " + Self.describeOffset(settings.lyricsOffset))
+    }
+
+    static func describeOffset(_ offset: Double) -> String {
+        if abs(offset) < 0.05 { return "on the beat" }
+        return String(format: "%.1f s %@", abs(offset), offset > 0 ? "earlier" : "later")
+    }
+
+    func show(toast message: String) {
+        toast = message
+        toastClear?.cancel()
+        let clear = DispatchWorkItem { [weak self] in self?.toast = nil }
+        toastClear = clear
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6, execute: clear)
+    }
+
+    /// Keeps the lyrics in step with the song and the karaoke switch.
+    private func syncLyrics(_ track: Track?) {
+        nowPlaying.needsTightTiming = settings.karaoke
+        guard settings.karaoke else { lyrics.clear(); return }
+        // Wait for the song's length: it makes the lyrics match far more reliable.
+        guard let track, track.duration > 0 else { return }
+        lyrics.load(for: track)
     }
 
     func startAudio() {
@@ -116,7 +157,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         AppState.shared.startAudio()
-        if AppState.shared.settings.showSong { AppState.shared.nowPlaying.start() }
+        let settings = AppState.shared.settings
+        if settings.showSong || settings.karaoke { AppState.shared.nowPlaying.start() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -157,6 +199,17 @@ struct SpectraApp: App {
                 Button("Save as Favourite") { state.saveFavourite() }
                     .keyboardShortcut("d", modifiers: .command)
             }
+            CommandMenu("Playback") {
+                Button("Play / Pause") { state.nowPlaying.playPause() }
+                    .keyboardShortcut("p", modifiers: .command)
+                Button("Next Song") { state.nowPlaying.nextTrack() }
+                    .keyboardShortcut("]", modifiers: .command)
+                Button("Previous Song") { state.nowPlaying.previousTrack() }
+                    .keyboardShortcut("[", modifiers: .command)
+                Divider()
+                Button(state.settings.karaoke ? "Hide Karaoke Lyrics" : "Show Karaoke Lyrics") { state.settings.karaoke.toggle() }
+                    .keyboardShortcut("k", modifiers: .command)
+            }
         }
     }
 }
@@ -171,6 +224,28 @@ struct ContentView: View {
         ZStack {
             MetalView(state: state)
                 .ignoresSafeArea()
+
+            if state.settings.karaoke, nowPlaying.track != nil {
+                Color.black.opacity(0.22).ignoresSafeArea().allowsHitTesting(false)
+                KaraokeView(player: nowPlaying, lyrics: state.lyrics, offset: state.settings.lyricsOffset)
+                    .padding(.trailing, state.showSettings ? 280 : 0)
+                    .transition(.opacity)
+            }
+
+            if let toast = state.toast {
+                VStack {
+                    Text(toast)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.vertical, 7)
+                        .padding(.horizontal, 14)
+                        .background(.black.opacity(0.65), in: Capsule())
+                        .padding(.top, 40)
+                    Spacer()
+                }
+                .transition(.opacity)
+                .allowsHitTesting(false)
+            }
 
             // Top-right: gear to bring the panel back.
             if !state.showSettings {
@@ -201,10 +276,14 @@ struct ContentView: View {
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 6) {
                         statusBanner
-                        if state.settings.showSong, let track = nowPlaying.track,
-                           state.settings.keepSong || songIsNew || hovering {
-                            SongLabel(track: track, artwork: nowPlaying.artwork)
-                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        if let track = nowPlaying.track {
+                            if hovering {
+                                PlayerBar(player: nowPlaying, state: state, track: track)
+                                    .transition(.opacity)
+                            } else if state.settings.showSong, state.settings.keepSong || songIsNew {
+                                SongLabel(track: track, artwork: nowPlaying.artwork)
+                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            }
                         }
                         if state.showSettings || hovering {
                             HStack(spacing: 6) {
@@ -216,11 +295,11 @@ struct ContentView: View {
                             .foregroundStyle(.white.opacity(0.6))
                         }
                     }
-                    Spacer()
+                    Spacer(minLength: 0)
                 }
             }
             .padding(14)
-            .allowsHitTesting(statusNeedsAction)
+            .padding(.trailing, state.showSettings ? 280 : 0)
 
             if state.showSettings {
                 HStack(spacing: 0) {
@@ -233,6 +312,9 @@ struct ContentView: View {
         .background(Color.black)
         .onHover { hovering = $0 }
         .animation(.easeInOut(duration: 0.5), value: songIsNew)
+        .animation(.easeInOut(duration: 0.25), value: hovering)
+        .animation(.easeInOut(duration: 0.2), value: state.toast)
+        .animation(.easeInOut(duration: 0.4), value: state.settings.karaoke)
         .animation(.easeInOut(duration: 0.5), value: nowPlaying.track)
         .task(id: nowPlaying.changedAt) {
             // Show the title for a while each time a new song starts.
@@ -240,13 +322,6 @@ struct ContentView: View {
             songIsNew = true
             try? await Task.sleep(nanoseconds: 10_000_000_000)
             if !Task.isCancelled { songIsNew = false }
-        }
-    }
-
-    private var statusNeedsAction: Bool {
-        switch state.audioStatus {
-        case .silent, .error: return true
-        default: return false
         }
     }
 
@@ -395,7 +470,12 @@ struct MetalView: NSViewRepresentable {
         view.onKey = { [state] event in
             guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
             switch event.keyCode {
-            case 49, 124: state.nextScene(); return true          // space, right arrow
+            case 49:                                              // space
+                if state.nowPlaying.track != nil { state.nowPlaying.playPause() } else { state.nextScene() }
+                return true
+            case 124: state.nextScene(); return true              // right arrow
+            case 126 where state.settings.karaoke: state.nudgeLyrics(0.1); return true    // up arrow
+            case 125 where state.settings.karaoke: state.nudgeLyrics(-0.1); return true   // down arrow
             case 123: state.previousScene(); return true          // left arrow
             default: break
             }
@@ -404,6 +484,10 @@ struct MetalView: NSViewRepresentable {
             case "l": state.toggleLock(); return true
             case "f": state.toggleFullScreen(); return true
             case "d": state.saveFavourite(); return true
+            case "n": state.nextScene(); return true
+            case "k": state.settings.karaoke.toggle(); return true
+            case "]": state.nowPlaying.nextTrack(); return true
+            case "[": state.nowPlaying.previousTrack(); return true
             default: return false
             }
         }

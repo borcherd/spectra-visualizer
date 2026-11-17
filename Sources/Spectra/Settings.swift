@@ -11,6 +11,10 @@ struct Settings: Codable, Equatable {
     var showSong = true
     /// Keep the title up all the time instead of only when a song starts.
     var keepSong = false
+    /// Karaoke mode: fetch time-synced lyrics for the current song and show them.
+    var karaoke = false
+    /// Seconds to shift lyrics by; positive shows them earlier.
+    var lyricsOffset: Double = 0
     /// Panel mode: false = the few everyday controls, true = everything.
     var advancedMode = false
 

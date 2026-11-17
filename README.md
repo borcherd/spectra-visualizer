@@ -8,6 +8,8 @@ spirit of the classic Winamp / Windows Media Player era.
 - **Rendered entirely on the GPU** with Metal: a feedback buffer that is warped, faded and repainted every frame, plus bloom and a finishing pass.
 - **Random scenes**: every scene is generated from a seed (motion, layers, palette) and morphs into the next one in time with the beat.
 - **Shows the song**: title, artist and cover art read directly from Spotify or Apple Music on your Mac. No login or API key.
+- **Player controls**: play / pause, next, previous and a seek bar for Spotify or Apple Music appear along the bottom when the mouse is over the window.
+- **Karaoke lyrics**: time-synced lyrics in the middle of the picture. Songs with per-word timing light up word by word (this is what keeps fast or overlapping vocals in step); songs with only per-line timing light up a line at a time. Lyrics come from [LRCLIB](https://lrclib.net), a free public database; turning karaoke on sends the song's title, artist, album and length there, and nothing else.
 - **Customisable**: palette, kaleidoscope, trails, glow, motion, which layers are allowed, classic EQ bars, film grain, frame-rate cap and more. Scenes can be locked or saved as favourites.
 
 ## Build and run
@@ -25,8 +27,12 @@ permission to capture system audio; nothing is recorded or sent anywhere.
 
 | Key | Action |
 | --- | --- |
-| Space / → | New random scene |
+| Space | Play / pause (new scene when no player is open) |
+| N / → | New random scene |
 | ← | Previous scene |
+| [ / ] | Previous / next song |
+| K | Karaoke lyrics on / off |
+| ↑ / ↓ | Show lyrics earlier / later, 0.1 s at a time |
 | L | Lock the current scene |
 | D | Save the scene as a favourite |
 | S | Show / hide the settings panel |
@@ -49,8 +55,7 @@ MIT. See [LICENSE](LICENSE). Spectra is not affiliated with Spotify or Apple.
 
 **v1 (this version)**: system-audio visualiser with generated scenes and a settings panel.
 
-**v2 (planned, not started)**: a full music player with the visualiser built in, plus a karaoke mode:
+**v2 (in progress, branch `v2-player-karaoke`)**: a player with the visualiser built in, plus a karaoke mode.
 
-- Local library playback (and possibly a streaming service's playback API).
-- Time-synced lyrics fetched from a lyrics API and drawn over the visuals.
-- Optional vocal removal for a true karaoke track.
+- Done: transport controls and seek bar for Spotify / Apple Music, time-synced karaoke lyrics.
+- Next candidates: search and playlists (needs the Spotify Web API and a login), playing local music files, and vocal reduction for a true karaoke track.
