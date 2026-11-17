@@ -59,3 +59,5 @@ MIT. See [LICENSE](LICENSE). Spectra is not affiliated with Spotify or Apple.
 
 - Done: transport controls and seek bar for Spotify / Apple Music, time-synced karaoke lyrics.
 - Next candidates: search and playlists (needs the Spotify Web API and a login), playing local music files, and vocal reduction for a true karaoke track.
+
+**v3 (planned)**: the same visuals on Mac, Windows, the web and smart TVs. The thinking so far is in [issue #1](https://github.com/borcherd/spectra-visualizer/issues/1).
