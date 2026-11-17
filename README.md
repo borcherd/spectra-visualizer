@@ -41,6 +41,10 @@ write a contact sheet, which is how the shaders are checked:
 .build/release/Spectra --snapshot build/snapshots/sheet.png --scenes 12 --cols 4 --size 480x270 --seed 1
 ```
 
+## Licence
+
+MIT. See [LICENSE](LICENSE). Spectra is not affiliated with Spotify or Apple.
+
 ## Roadmap
 
 **v1 (this version)**: system-audio visualiser with generated scenes and a settings panel.
