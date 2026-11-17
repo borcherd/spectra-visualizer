@@ -1,0 +1,26 @@
+# Spectra
+
+Native macOS music visualiser: Swift, SwiftUI shell, Metal rendering, Core Audio process tap for system audio. SwiftPM executable packaged into an `.app` by `build.sh`.
+
+## Commands
+
+- `./build.sh` builds and signs `build/Spectra.app`; `./build.sh run` also launches it.
+- `swift build -c release` for a quick compile check.
+- Visual check without the UI: `.build/release/Spectra --snapshot build/snapshots/sheet.png --scenes 12 --cols 4 --size 480x270 --seed 1` renders random scenes against the demo synth into one PNG. Extra flags: `--frames`, `--kaleido N`, `--palette <id>`, `--bars`, `--icon`. Always look at a contact sheet after changing shaders or scene generation.
+- Audio diagnostics: `open build/Spectra.app --args --status-file "$PWD/build/status.log"` appends tap and audio-status changes to that file.
+
+## Layout (`Sources/Spectra`)
+
+- `AudioTap.swift`: system audio capture (process tap + private aggregate device). Starts off the main thread because the permission prompt can block.
+- `AudioAnalyzer.swift`: FFT, log spectrum, peaks, waveform, band levels, beat detection, plus `DemoSynth`.
+- `Scene.swift`: `Slot` (the uniform layout), seeded `SceneGenerator` archetypes, `SceneDirector` (morphing, auto-change).
+- `Shaders.swift`: all Metal shader source, compiled at launch. `#define u_<slot>` lines are generated from `Slot`, so adding a uniform means adding a `Slot` case only.
+- `Renderer.swift`: passes are feedback -> bright -> blur x2 -> composite.
+- `Settings.swift`, `SettingsView.swift`, `App.swift`: persisted settings, the panel, window and shortcuts.
+- `Snapshot.swift`: the headless contact-sheet mode.
+
+## Notes
+
+- Shaders are compiled from a Swift string at runtime; a shader error only shows up when the app or snapshot mode runs, not at `swift build`.
+- The app must run from the signed bundle for the audio permission prompt to work (`NSAudioCaptureUsageDescription` lives in `Support/Info.plist`).
+- v2 direction (not started): full player with built-in visualiser and a karaoke mode (synced lyrics from an API, optional vocal removal). See the roadmap in `README.md`.
