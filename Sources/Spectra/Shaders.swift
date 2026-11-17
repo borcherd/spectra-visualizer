@@ -66,15 +66,15 @@ enum Shaders {
     static inline float peakAt(texture2d<float> t, float x) { return t.sample(sClamp, float2(x, 0.625)).r; }
 
     // Equaliser bars. Returns (body, cap, bar position 0..1, height 0..1).
-    static float4 barsAt(float2 p, float aspect, texture2d<float> audioTex, constant Uniforms &U) {
+    static float4 barsAt(float2 p, float2 ext, texture2d<float> audioTex, constant Uniforms &U) {
         float mode = u_barsMode;
         float t, y, H;
         if (mode < 0.5) {            // rising from the bottom edge
-            t = p.x / (2.0 * aspect * 0.94) + 0.5;
-            y = p.y + 0.94;
+            t = p.x / (2.0 * ext.x * 0.94) + 0.5;
+            y = p.y + 0.94 * ext.y;
             H = 1.3;
         } else if (mode < 1.5) {     // mirrored around the centre line
-            t = p.x / (2.0 * aspect * 0.94) + 0.5;
+            t = p.x / (2.0 * ext.x * 0.94) + 0.5;
             y = abs(p.y);
             H = 0.8;
         } else {                     // radial
@@ -119,8 +119,10 @@ enum Shaders {
                                 texture2d<float> audioTex [[texture(1)]],
                                 constant Uniforms &U [[buffer(0)]])
     {
-        float aspect = u_aspect;
-        float2 p = float2((in.uv.x - 0.5) * 2.0 * aspect, (0.5 - in.uv.y) * 2.0);
+        // Half-size of the picture in scene units. The shorter side is always 1,
+        // so scenes keep their proportions on wide, square and portrait screens.
+        float2 ext = float2(max(u_aspect, 1.0), max(1.0 / u_aspect, 1.0));
+        float2 p = float2((in.uv.x - 0.5) * 2.0 * ext.x, (0.5 - in.uv.y) * 2.0 * ext.y);
         if (u_mirror > 0.5) p.x = abs(p.x);
         float kN = u_kaleidoN;
         if (kN >= 2.0) p = kfold(p, kN, u_kaleidoRot);
@@ -143,7 +145,7 @@ enum Shaders {
         q += (p / max(r, 1e-4)) * sin(r * u_rippleFreq - u_time * 3.0) * u_ripple * 0.006 * k * (0.4 + u_bass);
         q += float2(u_driftX, u_driftY) * 0.004 * k;
 
-        float2 uvp = float2(q.x / aspect * 0.5 + 0.5, 0.5 - q.y * 0.5);
+        float2 uvp = float2(q.x / ext.x * 0.5 + 0.5, 0.5 - q.y / ext.y * 0.5);
         float3 col = prevTex.sample(sMirror, uvp).rgb;
         if (u_blur > 0.001) {
             float2 px = 1.5 / float2(u_resX, u_resY);
@@ -175,13 +177,13 @@ enum Shaders {
         // Waveform
         if (u_waveAmt > 0.001) {
             float w = 0.004 + 0.006 * u_waveThick;
-            float tx = p.x / (2.0 * aspect) + 0.5;
+            float tx = p.x / (2.0 * ext.x) + 0.5;
             float d;
             float ct;
             if (u_waveMode < 0.5) {                 // oscilloscope line
                 float y0 = waveAt(audioTex, tx) * u_waveAmp * 0.45;
                 float y1 = waveAt(audioTex, tx + 0.003) * u_waveAmp * 0.45;
-                float slope = (y1 - y0) / (0.003 * 2.0 * aspect);
+                float slope = (y1 - y0) / (0.003 * 2.0 * ext.x);
                 d = abs(p.y - y0) / sqrt(1.0 + slope * slope);
                 ct = tx;
             } else if (u_waveMode < 1.5) {          // circle
@@ -205,7 +207,7 @@ enum Shaders {
 
         // Equaliser bars bleeding into the trails
         if (u_barsInk > 0.001) {
-            float4 b = barsAt(p, aspect, audioTex, U);
+            float4 b = barsAt(p, ext, audioTex, U);
             ink += barsColor(b, U) * u_barsInk * 0.55;
         }
 
@@ -218,7 +220,7 @@ enum Shaders {
                 float h2 = hash11(fi * 3.1 + u_seed + 5.0);
                 float tt = u_time * u_orbSpeed * (0.4 + h1) * 0.6 + u_bassAccum * 0.5 * h2 + h2 * 6.2831853;
                 float2 c = float2(cos(tt * (1.0 + h2)), sin(tt * 1.3 + h1 * 6.2831853)) * u_orbSpread * (0.3 + 0.7 * h1);
-                c.x *= min(aspect, 1.5);
+                c *= min(ext, float2(1.5));
                 if (u_mirror > 0.5) c.x = abs(c.x);
                 if (kN >= 2.0) c = kfold(c, kN, u_kaleidoRot);
                 int m = i % 3;
@@ -289,6 +291,11 @@ enum Shaders {
         return float4(col, 1.0);
     }
 
+    // Carries the picture over when the window changes size or screen.
+    fragment float4 fs_copy(VSOut in [[stage_in]], texture2d<float> src [[texture(0)]]) {
+        return float4(src.sample(sClamp, in.uv).rgb, 1.0);
+    }
+
     // ---------------------------------------------------------------- bloom
 
     fragment float4 fs_bright(VSOut in [[stage_in]], texture2d<float> src [[texture(0)]]) {
@@ -337,8 +344,9 @@ enum Shaders {
 
         // Crisp equaliser overlay
         if (u_barsAmt > 0.001) {
-            float2 p = float2(c.x * 2.0 * u_aspect, -c.y * 2.0);
-            float4 b = barsAt(p, u_aspect, audioTex, U);
+            float2 ext = float2(max(u_aspect, 1.0), max(1.0 / u_aspect, 1.0));
+            float2 p = float2(c.x * 2.0 * ext.x, -c.y * 2.0 * ext.y);
+            float4 b = barsAt(p, ext, audioTex, U);
             col += barsColor(b, U) * u_barsAmt * u_intensity;
         }
 

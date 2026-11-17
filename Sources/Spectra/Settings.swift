@@ -2,6 +2,18 @@ import Foundation
 
 /// Everything the user can tweak. Persisted as JSON in UserDefaults.
 struct Settings: Codable, Equatable {
+    // The simple controls
+    /// "mix", "classic", "trippy" or "chill": which kinds of scene get generated.
+    var mood = "mix"
+    /// One dial for how hard everything reacts: brightness, motion and sensitivity together.
+    var energy: Double = 0.5
+    /// Show the song title (read from Spotify / Music) over the visuals.
+    var showSong = true
+    /// Keep the title up all the time instead of only when a song starts.
+    var keepSong = false
+    /// Panel mode: false = the few everyday controls, true = everything.
+    var advancedMode = false
+
     // Audio
     var sensitivity: Double = 1.0
     var smoothing: Double = 0.5
@@ -9,7 +21,7 @@ struct Settings: Codable, Equatable {
 
     // Scenes
     var autoChange = true
-    var interval: Double = 25
+    var interval: Double = 30
     var morphSeconds: Double = 3
     var locked = false
 
@@ -43,12 +55,14 @@ struct Settings: Codable, Equatable {
     // Performance
     /// 0 = display maximum
     var fpsCap = 0
-    var renderScale: Double = 0.75
+    /// Internal render scale; 0 = automatic (adapts to the screen it is on).
+    var resolution: Double = 0
     var showFPS = false
 
-    var layerSignature: String {
+    /// Changes whenever something that affects scene generation changes.
+    var generationSignature: String {
         [layerWave, layerBars, layerOrbs, layerPlasma, layerShapes, layerBurst, layerSparks]
-            .map { $0 ? "1" : "0" }.joined()
+            .map { $0 ? "1" : "0" }.joined() + mood
     }
 
     private static let key = "spectra.settings.v1"

@@ -97,7 +97,15 @@ enum SceneGenerator {
     static func make(seed: UInt64, settings s: Settings) -> VizScene {
         var r = RNG(s: seed)
         var sc = VizScene(seed: seed)
-        let kind = Int(r.next() % UInt64(archetypes.count))
+        // The mood narrows which archetypes can come up.
+        let pool: [Int]
+        switch s.mood {
+        case "classic": pool = [3, 3, 6]
+        case "trippy": pool = [0, 2, 4, 5]
+        case "chill": pool = [1, 1, 4]
+        default: pool = Array(0..<archetypes.count)
+        }
+        let kind = pool[Int(r.next() % UInt64(pool.count))]
         sc.name = "\(archetypes[kind]) \(String(format: "%04X", UInt16(truncatingIfNeeded: seed)))"
 
         func on(_ p: Float, _ lo: Float = 0.7, _ hi: Float = 1.0) -> Float { r.chance(p) ? r.range(lo, hi) : 0 }
@@ -194,6 +202,20 @@ enum SceneGenerator {
             kaleidoChance = sc[.barsMode] == 2 ? 0.15 : 0
         }
 
+        switch s.mood {
+        case "trippy":
+            kaleidoChance = max(kaleidoChance, 0.6)
+        case "chill":
+            kaleidoChance *= 0.5
+            for slot in [Slot.zoom, .zoomBass, .rot, .rotBass, .swirl, .ripple, .palPhase, .orbSpeed, .shapeSpin] {
+                sc[slot] *= 0.6
+            }
+            burst = 0
+        case "classic":
+            barsOverlay = max(barsOverlay, 0.9)
+        default:
+            break
+        }
         sc[.kaleidoN] = r.chance(kaleidoChance) ? r.pick([3, 4, 5, 6, 8, 10, 12]) : 0
 
         // Respect the user's layer switches.
@@ -266,7 +288,7 @@ final class SceneDirector {
         morph = 0
         sinceChange = 0
         flash = 1
-        layerSignature = settings.layerSignature
+        layerSignature = settings.generationSignature
         onSceneChange?(current)
     }
 
@@ -280,7 +302,7 @@ final class SceneDirector {
     }
 
     func update(dt: Float, beat: Bool, settings s: Settings) {
-        if s.layerSignature != layerSignature {
+        if s.generationSignature != layerSignature {
             go(to: current.seed, settings: s, morphSeconds: 0.6, remember: false)
         }
         morph = min(1, morph + dt / morphDuration)

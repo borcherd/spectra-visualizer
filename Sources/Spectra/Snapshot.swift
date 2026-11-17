@@ -38,11 +38,23 @@ enum Snapshot {
         var s = Settings()
         s.demoMode = true
         s.autoChange = false
-        s.renderScale = 1
+        s.resolution = 1
         s.grain = 0
         if let k = value("--kaleido"), let n = Int(k) { s.kaleido = n }
         if let p = value("--palette") { s.palette = p }
         if args.contains("--bars") { s.alwaysBars = true }
+        if let m = value("--mood") { s.mood = m }
+        if args.contains("--auto-res") { s.resolution = 0 }
+        // `--resize-to WxH`: after the normal frames, switch to a target of another
+        // size for two frames, as happens when the window moves to another screen.
+        var resizeTarget: MTLTexture?
+        if let size = value("--resize-to")?.split(separator: "x"), size.count == 2,
+           let w = Int(size[0]), let h = Int(size[1]) {
+            let rd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Renderer.outputFormat, width: w, height: h, mipmapped: false)
+            rd.usage = [.renderTarget, .shaderRead]
+            rd.storageMode = .shared
+            resizeTarget = device.makeTexture(descriptor: rd)
+        }
 
         let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Renderer.outputFormat, width: width, height: height, mipmapped: false)
         td.usage = [.renderTarget, .shaderRead]
@@ -80,6 +92,23 @@ enum Snapshot {
                 renderer.encode(to: target, commandBuffer: cb, settings: s)
                 cb.commit()
                 if f % 30 == 29 || f == frames - 1 { cb.waitUntilCompleted() }
+            }
+            if let rt = resizeTarget {
+                for _ in 0..<2 {
+                    clock += Double(dt)
+                    renderer.step(dt: dt, settings: s, now: clock)
+                    guard let cb = renderer.makeCommandBuffer() else { return 1 }
+                    renderer.encode(to: rt, commandBuffer: cb, settings: s)
+                    cb.commit()
+                    cb.waitUntilCompleted()
+                }
+                // Render back at the sheet size so the result fits the contact sheet.
+                clock += Double(dt)
+                renderer.step(dt: dt, settings: s, now: clock)
+                guard let cb = renderer.makeCommandBuffer() else { return 1 }
+                renderer.encode(to: target, commandBuffer: cb, settings: s)
+                cb.commit()
+                cb.waitUntilCompleted()
             }
             pixels.withUnsafeMutableBytes { raw in
                 target.getBytes(raw.baseAddress!, bytesPerRow: width * 4,

@@ -6,7 +6,7 @@ Native macOS music visualiser: Swift, SwiftUI shell, Metal rendering, Core Audio
 
 - `./build.sh` builds and signs `build/Spectra.app`; `./build.sh run` also launches it.
 - `swift build -c release` for a quick compile check.
-- Visual check without the UI: `.build/release/Spectra --snapshot build/snapshots/sheet.png --scenes 12 --cols 4 --size 480x270 --seed 1` renders random scenes against the demo synth into one PNG. Extra flags: `--frames`, `--kaleido N`, `--palette <id>`, `--bars`, `--icon`. Always look at a contact sheet after changing shaders or scene generation.
+- Visual check without the UI: `.build/release/Spectra --snapshot build/snapshots/sheet.png --scenes 12 --cols 4 --size 480x270 --seed 1` renders random scenes against the demo synth into one PNG. Extra flags: `--frames`, `--kaleido N`, `--palette <id>`, `--mood <mix|classic|trippy|chill>`, `--bars`, `--auto-res`, `--resize-to WxH` (simulates moving to another screen), `--icon`. Always look at a contact sheet after changing shaders or scene generation, and include a wide (`860x360`) and a portrait (`360x640`) run when touching layout maths.
 - Audio diagnostics: `open build/Spectra.app --args --status-file "$PWD/build/status.log"` appends tap and audio-status changes to that file.
 
 ## Layout (`Sources/Spectra`)
@@ -17,9 +17,13 @@ Native macOS music visualiser: Swift, SwiftUI shell, Metal rendering, Core Audio
 - `Shaders.swift`: all Metal shader source, compiled at launch. `#define u_<slot>` lines are generated from `Slot`, so adding a uniform means adding a `Slot` case only.
 - `Renderer.swift`: passes are feedback -> bright -> blur x2 -> composite.
 - `Settings.swift`, `SettingsView.swift`, `App.swift`: persisted settings, the panel, window and shortcuts.
+- `NowPlaying.swift`: current song from Spotify / Music via their playback broadcasts plus an `osascript` query (run as a subprocess so the Automation permission prompt cannot block the UI). Only queries players that are already running. The system-wide now-playing API is private and locked down, so other sources (browsers etc.) are not covered.
 - `Snapshot.swift`: the headless contact-sheet mode.
 
 ## Notes
+
+- Keep the panel simple: the owner wants few controls. The panel has a Simple / Advanced switch. Simple shows only the everyday controls (new scene, lock, favourite, Style, Colours, Energy, Change scene, Equaliser bars, Song title); anything new goes in Advanced unless asked otherwise.
+- Scene coordinates are normalised so the shorter screen side is 1 (`ext` in the shaders). Never use raw aspect for layout.
 
 - Shaders are compiled from a Swift string at runtime; a shader error only shows up when the app or snapshot mode runs, not at `swift build`.
 - The app must run from the signed bundle for the audio permission prompt to work (`NSAudioCaptureUsageDescription` lives in `Support/Info.plist`).

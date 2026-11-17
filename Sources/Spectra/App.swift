@@ -26,9 +26,15 @@ enum Diagnostics {
 final class AppState: ObservableObject {
     static let shared = AppState()
 
-    @Published var settings: Settings { didSet { if settings != oldValue { settings.save() } } }
+    @Published var settings: Settings {
+        didSet {
+            guard settings != oldValue else { return }
+            settings.save()
+            if settings.showSong { nowPlaying.start() }
+        }
+    }
     @Published var favourites: [Favourite] { didSet { Favourite.saveAll(favourites) } }
-    @Published var showSettings = true
+    @Published var showSettings: Bool { didSet { UserDefaults.standard.set(showSettings, forKey: "spectra.panelOpen") } }
     @Published var sceneName = ""
     @Published var audioStatus: AudioStatus = .starting
     @Published var fps: Double = 0
@@ -37,11 +43,13 @@ final class AppState: ObservableObject {
     let analyzer = AudioAnalyzer()
     let director = SceneDirector()
     let tap = SystemAudioTap()
+    let nowPlaying = NowPlaying()
     let renderer: Renderer
 
     private init() {
         settings = Settings.load()
         favourites = Favourite.loadAll()
+        showSettings = UserDefaults.standard.object(forKey: "spectra.panelOpen") as? Bool ?? true
         guard let dev = MTLCreateSystemDefaultDevice() else { fatalError("Spectra needs a Metal-capable Mac.") }
         device = dev
         do {
@@ -92,6 +100,12 @@ final class AppState: ObservableObject {
         favourites.removeAll { $0.id == fav.id }
     }
 
+    func resetSettings() {
+        var fresh = Settings()
+        fresh.advancedMode = settings.advancedMode
+        settings = fresh
+    }
+
     func toggleFullScreen() {
         (NSApp.keyWindow ?? NSApp.windows.first)?.toggleFullScreen(nil)
     }
@@ -102,6 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         AppState.shared.startAudio()
+        if AppState.shared.settings.showSong { AppState.shared.nowPlaying.start() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -117,7 +132,7 @@ struct SpectraApp: App {
 
     var body: some Scene {
         Window("Spectra", id: "main") {
-            ContentView(state: state)
+            ContentView(state: state, nowPlaying: state.nowPlaying)
                 .frame(minWidth: 640, minHeight: 400)
                 .preferredColorScheme(.dark)
         }
@@ -148,7 +163,9 @@ struct SpectraApp: App {
 
 struct ContentView: View {
     @ObservedObject var state: AppState
+    @ObservedObject var nowPlaying: NowPlaying
     @State private var hovering = false
+    @State private var songIsNew = false
 
     var body: some View {
         ZStack {
@@ -184,6 +201,11 @@ struct ContentView: View {
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 6) {
                         statusBanner
+                        if state.settings.showSong, let track = nowPlaying.track,
+                           state.settings.keepSong || songIsNew || hovering {
+                            SongLabel(track: track, artwork: nowPlaying.artwork)
+                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        }
                         if state.showSettings || hovering {
                             HStack(spacing: 6) {
                                 if state.settings.locked { Image(systemName: "lock.fill") }
@@ -210,6 +232,15 @@ struct ContentView: View {
         }
         .background(Color.black)
         .onHover { hovering = $0 }
+        .animation(.easeInOut(duration: 0.5), value: songIsNew)
+        .animation(.easeInOut(duration: 0.5), value: nowPlaying.track)
+        .task(id: nowPlaying.changedAt) {
+            // Show the title for a while each time a new song starts.
+            guard nowPlaying.track != nil else { return }
+            songIsNew = true
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            if !Task.isCancelled { songIsNew = false }
+        }
     }
 
     private var statusNeedsAction: Bool {
@@ -256,9 +287,79 @@ struct ContentView: View {
     }
 }
 
+/// Cover art, title and artist of the song that is playing.
+struct SongLabel: View {
+    let track: Track
+    let artwork: NSImage?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if let artwork {
+                Image(nsImage: artwork)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 44, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            } else {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(.white.opacity(0.1))
+                    .frame(width: 44, height: 44)
+                    .overlay(Image(systemName: "music.note").foregroundStyle(.white.opacity(0.6)))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(track.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+                if !track.artist.isEmpty {
+                    Text(track.artist)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .lineLimit(1)
+                }
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.vertical, 8)
+        .padding(.leading, 8)
+        .padding(.trailing, 14)
+        .frame(maxWidth: 360, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: false)
+        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
 /// The MTKView, plus bare-key shortcuts and double-click for full screen.
 final class VizView: MTKView {
     var onKey: ((NSEvent) -> Bool)?
+    /// Asked once a second; when true and the mouse has been still, the cursor is hidden.
+    var canHideCursor: (() -> Bool)?
+    private var lastMouseMove = Date()
+    private var cursorTimer: Timer?
+    private var tracking: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        lastMouseMove = Date()
+        super.mouseMoved(with: event)
+    }
+
+    private func startCursorTimer() {
+        cursorTimer?.invalidate()
+        cursorTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, let window = self.window, window.isKeyWindow,
+                  self.canHideCursor?() == true,
+                  Date().timeIntervalSince(self.lastMouseMove) > 2.5 else { return }
+            let mouse = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            if self.bounds.contains(mouse) { NSCursor.setHiddenUntilMouseMoves(true) }
+        }
+    }
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -266,6 +367,7 @@ final class VizView: MTKView {
         super.viewDidMoveToWindow()
         window?.makeFirstResponder(self)
         window?.backgroundColor = .black
+        if window != nil { startCursorTimer() } else { cursorTimer?.invalidate() }
     }
 
     override func keyDown(with event: NSEvent) {
@@ -289,6 +391,7 @@ struct MetalView: NSViewRepresentable {
         view.enableSetNeedsDisplay = false
         view.preferredFramesPerSecond = 60
         view.delegate = state.renderer
+        view.canHideCursor = { [state] in !state.showSettings }
         view.onKey = { [state] event in
             guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
             switch event.keyCode {

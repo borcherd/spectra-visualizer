@@ -7,6 +7,7 @@ spirit of the classic Winamp / Windows Media Player era.
 - **Listens to system output** through a Core Audio process tap (macOS 14.2+). No virtual audio driver needed.
 - **Rendered entirely on the GPU** with Metal: a feedback buffer that is warped, faded and repainted every frame, plus bloom and a finishing pass.
 - **Random scenes**: every scene is generated from a seed (motion, layers, palette) and morphs into the next one in time with the beat.
+- **Shows the song**: title, artist and cover art read directly from Spotify or Apple Music on your Mac. No login or API key.
 - **Customisable**: palette, kaleidoscope, trails, glow, motion, which layers are allowed, classic EQ bars, film grain, frame-rate cap and more. Scenes can be locked or saved as favourites.
 
 ## Build and run

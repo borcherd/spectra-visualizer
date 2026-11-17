@@ -23,6 +23,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let pBlurH: MTLRenderPipelineState
     private let pBlurV: MTLRenderPipelineState
     private let pComposite: MTLRenderPipelineState
+    private let pCopy: MTLRenderPipelineState
 
     private var sceneA: MTLTexture?
     private var sceneB: MTLTexture?
@@ -30,6 +31,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var bloomB: MTLTexture?
     private let audioTex: MTLTexture
     private var needsClear = true
+    /// The picture from before a resize, stretched into the new buffers on the next frame.
+    private var carryOver: MTLTexture?
 
     private var uni = [Float](repeating: 0, count: slotCount)
     private var time: Float = 0
@@ -67,6 +70,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         pBlurH = try pipeline("fs_blur_h", Self.internalFormat)
         pBlurV = try pipeline("fs_blur_v", Self.internalFormat)
         pComposite = try pipeline("fs_composite", Self.outputFormat)
+        pCopy = try pipeline("fs_copy", Self.internalFormat)
 
         let ad = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r16Unorm,
                                                           width: AudioAnalyzer.bins,
@@ -92,7 +96,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         } else {
             analyzer.acceptTap = true
         }
-        analyzer.update(dt: dt, sensitivity: Float(s.sensitivity), smoothing: Float(s.smoothing), now: now)
+        // The Energy dial scales sensitivity, brightness and motion together.
+        let e = Float(max(0, min(1, s.energy)))
+        analyzer.update(dt: dt, sensitivity: Float(s.sensitivity) * (0.75 + 0.5 * e), smoothing: Float(s.smoothing), now: now)
         director.update(dt: dt, beat: analyzer.beatTriggered, settings: s)
         director.write(into: &uni, settings: s)
 
@@ -105,14 +111,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         set(.level, analyzer.level)
         set(.beat, analyzer.beat)
         set(.bassAccum, analyzer.bassAccum)
-        set(.intensity, Float(s.intensity))
+        set(.intensity, Float(s.intensity) * (0.7 + 0.6 * e))
         set(.glow, Float(s.glow))
         set(.grain, Float(s.grain))
         set(.vignette, Float(s.vignette))
         set(.chroma, Float(s.chroma))
         set(.scan, Float(s.scanlines))
         set(.mirror, s.mirror ? 1 : 0)
-        set(.warpGlobal, Float(s.motion))
+        set(.warpGlobal, Float(s.motion) * (0.45 + 1.1 * e))
 
         analyzer.texData.withUnsafeBytes { raw in
             audioTex.replace(region: MTLRegionMake2D(0, 0, AudioAnalyzer.bins, AudioAnalyzer.texRows),
@@ -124,10 +130,16 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     /// Encodes all passes, ending with the composite into `target`.
     func encode(to target: MTLTexture, commandBuffer cb: MTLCommandBuffer, settings s: Settings) {
-        ensureTextures(width: target.width, height: target.height, scale: s.renderScale)
+        ensureTextures(width: target.width, height: target.height, resolution: s.resolution)
         guard let a = sceneA, let b = sceneB, let b0 = bloomA, let b1 = bloomB else { return }
         if needsClear {
-            clear(cb, a); clear(cb, b)
+            if let old = carryOver {
+                pass(cb, target: a, pipeline: pCopy, textures: [old])
+            } else {
+                clear(cb, a)
+            }
+            clear(cb, b)
+            carryOver = nil
             needsClear = false
         }
         uni[Slot.aspect.rawValue] = Float(target.width) / Float(max(1, target.height))
@@ -168,9 +180,20 @@ final class Renderer: NSObject, MTKViewDelegate {
         cb.makeRenderCommandEncoder(descriptor: rp)?.endEncoding()
     }
 
-    private func ensureTextures(width: Int, height: Int, scale: Double) {
-        let w = max(64, Int(Double(width) * scale))
-        let h = max(64, Int(Double(height) * scale))
+    /// Internal render size for a given output size. `resolution` 0 means automatic:
+    /// full detail on ordinary windows, capped at a pixel budget on very large
+    /// (4K-6K) screens so the frame rate holds everywhere.
+    static func internalSize(width: Int, height: Int, resolution: Double) -> (Int, Int) {
+        var scale = resolution
+        if scale <= 0 {
+            let budget = 3_200_000.0
+            scale = min(1, (budget / Double(max(1, width * height))).squareRoot())
+        }
+        return (max(64, Int(Double(width) * scale)), max(64, Int(Double(height) * scale)))
+    }
+
+    private func ensureTextures(width: Int, height: Int, resolution: Double) {
+        let (w, h) = Self.internalSize(width: width, height: height, resolution: resolution)
         if let a = sceneA, a.width == w, a.height == h { return }
         func make(_ w: Int, _ h: Int) -> MTLTexture? {
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Self.internalFormat, width: w, height: h, mipmapped: false)
@@ -178,6 +201,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             d.storageMode = .private
             return device.makeTexture(descriptor: d)
         }
+        if !needsClear { carryOver = sceneA }
         sceneA = make(w, h)
         sceneB = make(w, h)
         bloomA = make(max(16, w / 4), max(16, h / 4))
